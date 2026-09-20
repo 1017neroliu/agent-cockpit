@@ -6,10 +6,14 @@
 #   agent-cockpit status   查看运行状态
 #   agent-cockpit serve    前台运行(调试)
 set -u
-DIR="$(cd "$(dirname "$0")/.." && pwd)"
+# 安装位置优先(./install.sh 会把项目复制到 ~/.agent-cockpit),回退到源码目录
+for CAND in "$HOME/.agent-cockpit" "$(cd "$(dirname "$0")/.." && pwd)"; do
+    [ -f "$CAND/server/server.js" ] && { DIR="$CAND"; break; }
+done
+[ -n "${DIR:-}" ] || { echo "❌ 未找到 server/server.js"; exit 1; }
 PID_FILE="/tmp/agent-cockpit.pid"
 LOG_FILE="/tmp/agent-cockpit.log"
-PORT="${COCKPIT_PORT:-8620}"
+PORT="${COCKPIT_PORT:-8621}"
 
 # 找 node:优先 PATH,其次 pi 自带的 node
 find_node() {

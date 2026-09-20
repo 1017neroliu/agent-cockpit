@@ -23,7 +23,7 @@ const { execFile, spawn } = require("node:child_process");
 
 const VERSION = "1.0.0";
 const HOME = os.homedir();
-const PORT = Number(process.env.COCKPIT_PORT || 8620);
+const PORT = Number(process.env.COCKPIT_PORT || 8621);
 const WEB_DIR = path.join(__dirname, "..", "web");
 
 // ---------------------------------------------------------------- 路径与常量

@@ -8,7 +8,7 @@
 
 ```bash
 ./install.sh          # 安装 agent-cockpit 命令到 ~/.local/bin
-agent-cockpit         # 启动并打开浏览器(http://127.0.0.1:8620)
+agent-cockpit         # 启动并打开浏览器(http://127.0.0.1:8621)
 ```
 
 其它命令:`agent-cockpit stop | status | serve(前台调试) | restart`。
