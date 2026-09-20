@@ -1,0 +1,720 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agent Cockpit · 多 Agent 统一管理</title>
+<style>
+:root {
+  --bg: #0d1117; --bg2: #161b22; --bg3: #21262d; --border: #30363d;
+  --fg: #e6edf3; --fg2: #8b949e; --accent: #58a6ff; --accent2: #3fb950;
+  --warn: #d29922; --danger: #f85149; --radius: 10px;
+  --mono: ui-monospace, "Cascadia Code", Consolas, monospace;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg); color: var(--fg); font: 14px/1.6 -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
+a { color: var(--accent); text-decoration: none; }
+
+header { display: flex; align-items: center; gap: 14px; padding: 14px 22px; border-bottom: 1px solid var(--border); background: var(--bg2); position: sticky; top: 0; z-index: 10; }
+header .logo { font-size: 17px; font-weight: 700; }
+header .logo span { color: var(--accent); }
+header .sub { color: var(--fg2); font-size: 12px; }
+header .spacer { flex: 1; }
+header .refresh { cursor: pointer; color: var(--fg2); border: 1px solid var(--border); border-radius: 6px; padding: 3px 10px; font-size: 12px; }
+header .refresh:hover { color: var(--fg); border-color: var(--fg2); }
+
+nav { display: flex; gap: 4px; padding: 10px 22px 0; border-bottom: 1px solid var(--border); background: var(--bg2); flex-wrap: wrap; }
+nav button { background: none; border: none; color: var(--fg2); padding: 8px 14px; cursor: pointer; font-size: 14px; border-bottom: 2px solid transparent; }
+nav button.active { color: var(--fg); border-bottom-color: var(--accent); }
+nav button:hover { color: var(--fg); }
+
+main { padding: 22px; max-width: 1180px; margin: 0 auto; }
+.view { display: none; }
+.view.active { display: block; }
+h2 { font-size: 16px; margin: 4px 0 14px; }
+h3 { font-size: 14px; color: var(--fg2); margin: 18px 0 10px; text-transform: uppercase; letter-spacing: .5px; }
+.card { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 14px; }
+.grid { display: grid; gap: 14px; }
+.grid.cols3 { grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
+.grid.cols2 { grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); }
+
+.row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.muted { color: var(--fg2); font-size: 12.5px; }
+.mono { font-family: var(--mono); font-size: 12.5px; }
+.badge { display: inline-block; padding: 1px 9px; border-radius: 999px; font-size: 11.5px; border: 1px solid var(--border); color: var(--fg2); }
+.badge.on { color: var(--accent2); border-color: rgba(63,185,80,.4); background: rgba(63,185,80,.08); }
+.badge.off { color: var(--fg2); }
+.badge.detected { color: var(--accent2); border-color: rgba(63,185,80,.4); }
+.badge.missing { color: var(--danger); border-color: rgba(248,81,73,.4); }
+
+/* 表单 */
+.field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; flex: 1; min-width: 200px; }
+.field label { font-size: 12.5px; color: var(--fg2); }
+input[type=text], input[type=password], input[type=number], select, textarea {
+  background: var(--bg3); color: var(--fg); border: 1px solid var(--border); border-radius: 7px;
+  padding: 7px 10px; font-size: 13.5px; font-family: inherit; outline: none; width: 100%;
+}
+input:focus, textarea:focus, select:focus { border-color: var(--accent); }
+textarea.code { font-family: var(--mono); font-size: 12.5px; min-height: 340px; white-space: pre; }
+.form-row { display: flex; gap: 12px; flex-wrap: wrap; }
+
+/* 开关 */
+.switch { position: relative; width: 40px; height: 22px; flex: none; cursor: pointer; }
+.switch input { display: none; }
+.switch .track { position: absolute; inset: 0; background: var(--bg3); border: 1px solid var(--border); border-radius: 999px; transition: .15s; }
+.switch .track::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--fg2); transition: .15s; }
+.switch input:checked + .track { background: rgba(63,185,80,.25); border-color: var(--accent2); }
+.switch input:checked + .track::after { left: 20px; background: var(--accent2); }
+
+/* 按钮 */
+button.btn { background: var(--bg3); color: var(--fg); border: 1px solid var(--border); border-radius: 7px; padding: 7px 14px; cursor: pointer; font-size: 13px; font-family: inherit; }
+button.btn:hover { border-color: var(--fg2); }
+button.btn.primary { background: #1f6feb33; border-color: #1f6feb; color: var(--accent); }
+button.btn.primary:hover { background: #1f6feb55; }
+button.btn.danger { color: var(--danger); border-color: rgba(248,81,73,.4); }
+button.btn.danger:hover { background: rgba(248,81,73,.1); }
+button.btn.small { padding: 3px 9px; font-size: 12px; }
+
+/* 表格 */
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { text-align: left; color: var(--fg2); font-weight: 500; font-size: 12px; padding: 7px 10px; border-bottom: 1px solid var(--border); }
+td { padding: 7px 10px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: var(--bg3); }
+td .ops { display: flex; gap: 6px; justify-content: flex-end; }
+
+/* 通道卡片 */
+.chan { display: flex; align-items: center; gap: 12px; }
+.chan .info { flex: 1; min-width: 0; }
+.chan .name { font-weight: 600; font-size: 13.5px; }
+.chan .desc { color: var(--fg2); font-size: 12px; }
+.chan-detail { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--border); display: none; }
+.chan.open .chan-detail { display: block; }
+.chan .expand { cursor: pointer; color: var(--fg2); font-size: 12px; user-select: none; }
+
+/* toast */
+#toast { position: fixed; bottom: 26px; left: 50%; transform: translateX(-50%); background: var(--bg3); border: 1px solid var(--border); color: var(--fg); border-radius: 8px; padding: 10px 18px; font-size: 13px; opacity: 0; transition: .25s; pointer-events: none; z-index: 100; max-width: 70vw; box-shadow: 0 6px 24px rgba(0,0,0,.5); }
+#toast.show { opacity: 1; }
+#toast.err { border-color: rgba(248,81,73,.5); color: var(--danger); }
+
+pre.report { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; font-family: var(--mono); font-size: 12.5px; white-space: pre-wrap; margin-top: 10px; display: none; }
+pre.report.show { display: block; }
+.empty { color: var(--fg2); font-size: 13px; padding: 14px 0; text-align: center; }
+.agent-tabs { display: flex; gap: 6px; margin-bottom: 14px; flex-wrap: wrap; }
+.agent-tabs button { background: var(--bg2); border: 1px solid var(--border); color: var(--fg2); border-radius: 999px; padding: 5px 14px; cursor: pointer; font-size: 12.5px; }
+.agent-tabs button.active { color: var(--accent); border-color: var(--accent); background: rgba(31,111,235,.1); }
+.kv { display: grid; grid-template-columns: 150px 1fr; gap: 4px 12px; font-size: 13px; }
+.kv .k { color: var(--fg2); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">🛩 Agent <span>Cockpit</span></div>
+  <div class="sub">多 Agent 统一管理 · <span id="version"></span></div>
+  <div class="spacer"></div>
+  <button class="refresh" onclick="loadState()">↻ 刷新</button>
+</header>
+
+<nav>
+  <button data-view="overview" class="active">总览</button>
+  <button data-view="notify">通知</button>
+  <button data-view="models">模型与密钥</button>
+  <button data-view="skills">Skills</button>
+  <button data-view="plugins">插件与扩展</button>
+  <button data-view="files">配置文件</button>
+</nav>
+
+<main>
+  <!-- ============ 总览 ============ -->
+  <section class="view active" id="view-overview">
+    <div class="grid cols3" id="overview-cards"></div>
+    <div class="card">
+      <h3>快捷操作</h3>
+      <div class="row">
+        <button class="btn" onclick="testNotify('')">🔊 测试通知(全部通道)</button>
+        <button class="btn" onclick="location.hash='';showView('notify')">⚙️ 通知设置</button>
+        <button class="btn" onclick="location.hash='';showView('models')">🤖 模型与密钥</button>
+      </div>
+      <pre class="report" id="overview-report"></pre>
+    </div>
+  </section>
+
+  <!-- ============ 通知 ============ -->
+  <section class="view" id="view-notify">
+    <div class="card">
+      <h2 style="margin-bottom:4px">通知通道</h2>
+      <div class="muted" style="margin-bottom:14px">配置对所有 agent 生效,保存后立即生效,无需重启。来源:~/.agent-notify/notify.conf</div>
+      <div class="grid cols2" id="notify-channels"></div>
+    </div>
+
+    <div class="grid cols2">
+      <div class="card">
+        <h2 style="margin-bottom:4px">提醒策略</h2>
+        <div class="muted" style="margin-bottom:12px">只有跑超过最短时长的任务才提醒「完成」,短对话静音;「卡住」提醒不受此限制(Codex 除外)</div>
+        <div class="field">
+          <label>任务完成提醒的最短时长(秒,0 = 每轮都提醒)</label>
+          <input type="number" id="f-min_task_seconds" min="0">
+        </div>
+        <h3>哪些 agent 允许发通知(留空 = 全部)</h3>
+        <div class="row" id="notify-agent-toggles" style="gap:18px; margin-bottom:8px"></div>
+      </div>
+
+      <div class="card">
+        <h2 style="margin-bottom:4px">模式与测试</h2>
+        <div class="muted" style="margin-bottom:12px">快捷切换:只推手机 / 只用本机 / 全开 / 全关</div>
+        <div class="row" style="margin-bottom:14px">
+          <button class="btn" onclick="setMode('phone')">📱 phone</button>
+          <button class="btn" onclick="setMode('local')">💻 local</button>
+          <button class="btn" onclick="setMode('all')">🌐 all</button>
+          <button class="btn" onclick="setMode('off')">🔇 off</button>
+        </div>
+        <h3>发送测试通知</h3>
+        <div class="row">
+          <button class="btn primary" onclick="testNotify('pi')">测试 Pi</button>
+          <button class="btn primary" onclick="testNotify('claude-code')">测试 Claude Code</button>
+          <button class="btn primary" onclick="testNotify('codex')">测试 Codex</button>
+        </div>
+        <pre class="report" id="notify-report"></pre>
+      </div>
+    </div>
+
+    <div class="row">
+      <button class="btn primary" onclick="saveNotify()">💾 保存通知配置</button>
+      <span class="muted">保存只改动有变化的项</span>
+    </div>
+  </section>
+
+  <!-- ============ 模型与密钥 ============ -->
+  <section class="view" id="view-models">
+    <div class="agent-tabs" id="models-tabs"></div>
+
+    <div id="models-panel"></div>
+  </section>
+
+  <!-- ============ Skills ============ -->
+  <section class="view" id="view-skills">
+    <div class="card">
+      <div class="row" style="justify-content:space-between; margin-bottom:10px">
+        <h2 style="margin:0">Skills 管理</h2>
+        <div class="row">
+          <input type="text" id="skill-new-name" placeholder="新 skill 名称(如 my-skill)" style="width:240px">
+          <button class="btn primary" onclick="createSkill()">＋ 从模板创建</button>
+        </div>
+      </div>
+      <div class="muted" style="margin-bottom:10px">支持启用/停用/删除;目录后缀 <span class="mono">.disabled</span> 即停用。Claude Code 与 Pi 均遵循 Agent Skills 标准</div>
+      <div id="skills-tabs" class="agent-tabs"></div>
+      <div id="skills-panel"></div>
+    </div>
+  </section>
+
+  <!-- ============ 插件与扩展 ============ -->
+  <section class="view" id="view-plugins">
+    <div id="plugins-panel"></div>
+  </section>
+
+  <!-- ============ 配置文件 ============ -->
+  <section class="view" id="view-files">
+    <div class="card">
+      <div class="row" style="justify-content:space-between; margin-bottom:12px">
+        <h2 style="margin:0">原始配置编辑</h2>
+        <div class="row">
+          <select id="file-select" style="width:320px" onchange="loadFile()"></select>
+          <button class="btn primary" onclick="saveFile()">💾 保存</button>
+        </div>
+      </div>
+      <div class="muted" style="margin-bottom:10px">保存前自动备份为 <span class="mono">*.bak-cockpit</span>;JSON 会先校验。改错可从备份恢复</div>
+      <textarea class="code" id="file-editor" spellcheck="false"></textarea>
+      <pre class="report" id="file-report"></pre>
+    </div>
+  </section>
+</main>
+
+<div id="toast"></div>
+
+<script>
+"use strict";
+let S = null;               // /api/state 结果
+let modelsAgent = "pi";     // 模型页当前 agent
+let skillsAgent = "claude-code";
+const $ = (id) => document.getElementById(id);
+
+function toast(msg, isErr) {
+  const t = $("toast");
+  t.textContent = msg;
+  t.className = "show" + (isErr ? " err" : "");
+  clearTimeout(t._h);
+  t._h = setTimeout(() => (t.className = ""), isErr ? 5000 : 2600);
+}
+
+async function api(path, opts) {
+  const r = await fetch(path, opts ? { headers: { "Content-Type": "application/json" }, ...opts } : undefined);
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+
+// ---------- 视图切换 ----------
+function showView(name) {
+  document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("active", b.dataset.view === name));
+  document.querySelectorAll(".view").forEach((v) => v.classList.toggle("active", v.id === "view-" + name));
+  if (name === "files") initFiles();
+}
+
+document.querySelectorAll("nav button").forEach((b) => b.onclick = () => showView(b.dataset.view));
+
+// ---------- 总览 ----------
+function renderOverview() {
+  const wrap = $("overview-cards");
+  wrap.innerHTML = "";
+  for (const id of ["claude-code", "pi", "codex"]) {
+    const a = S.agents[id];
+    const el = document.createElement("div");
+    el.className = "card";
+    const model = id === "claude-code" ? a.settings.model : id === "pi" ? a.settings.defaultModel : a.settings.model;
+    const provider = id === "pi" ? a.settings.defaultProvider : id === "codex" ? a.settings.modelProvider : "Anthropic";
+    const notifyOn = !S.notify.enabledAgents.length || S.notify.enabledAgents.includes(id);
+    const parts = [];
+    parts.push(`<div class="row" style="justify-content:space-between; margin-bottom:8px">
+      <strong style="font-size:15px">${a.label}</strong>
+      <span class="badge ${a.detected ? "detected" : "missing"}">${a.detected ? "已检测" : "未安装"}</span></div>`);
+    parts.push(`<div class="kv" style="margin-bottom:10px">
+      <div class="k">当前模型</div><div class="mono">${esc(model || "(未设置)")}</div>
+      <div class="k">Provider</div><div class="mono">${esc(provider || "-")}</div>
+      <div class="k">Skills</div><div>${(a.skills || []).length} 个</div>
+      <div class="k">通知</div><div><span class="badge ${notifyOn ? "on" : "off"}">${notifyOn ? "已启用" : "已静音"}</span></div>
+    </div>`);
+    const testBtn = a.detected ? `<button class="btn small" onclick="testNotify('${id}')">🔊 测试通知</button>` : "";
+    const toggleBtn = a.detected ? `<button class="btn small" onclick="toggleAgentNotify('${id}', ${!notifyOn})">${notifyOn ? "🔕 静音此 agent" : "🔔 取消静音"}</button>` : "";
+    parts.push(`<div class="row" style="justify-content:flex-end; gap:8px">${toggleBtn}${testBtn}</div>`);
+    el.innerHTML = parts.join("");
+    wrap.appendChild(el);
+  }
+  const an = $("overview-report");
+  an.classList.remove("show");
+}
+
+async function toggleAgentNotify(agentId, enable) {
+  const list = new Set(S.notify.enabledAgents);
+  const all = ["claude-code", "pi", "codex"];
+  if (enable) {
+    list.add(agentId);
+    if (list.size === all.length) list.clear(); // 全部启用等价于留空
+  } else {
+    all.forEach((a) => list.add(a)); // 先确保齐全
+    list.delete(agentId);
+    if (list.size === all.length) list.clear();
+  }
+  const conf = { agents: [...list].join(",") };
+  await api("/api/notify/conf", { method: "PUT", body: JSON.stringify(conf) });
+  toast(enable ? `已恢复 ${agentId} 的通知` : `已静音 ${agentId} 的通知`);
+  await loadState();
+}
+
+// ---------- 通知 ----------
+const CHANNELS = [
+  { key: "local_sound", name: "本机提示音", desc: "完成任务播放柔和音效,卡住播放急促音效", detail: "sounds" },
+  { key: "desktop_popup", name: "桌面弹窗", desc: "系统通知中心弹窗,应用名 = agent 名" },
+  { key: "terminal", name: "终端 OSC 通知", desc: "Ghostty / iTerm2 / WezTerm / Kitty 原生通知,仅交互终端" },
+  { key: "bark", name: "Bark 手机推送", desc: "iPhone 推送,按 agent 分组,卡住升级 critical 穿透勿扰", detail: "bark" },
+  { key: "wled", name: "WLED 灯带", desc: "完成 = 绿灯常亮,卡住 = 红灯闪烁,操作后熄灭", detail: "wled" },
+];
+
+function renderNotify() {
+  const c = S.notify.conf;
+  const wrap = $("notify-channels");
+  wrap.innerHTML = "";
+  for (const ch of CHANNELS) {
+    const on = (c[ch.key] || "no") === "yes";
+    const el = document.createElement("div");
+    el.className = "card chan";
+    let detail = "";
+    if (ch.detail === "bark") {
+      detail = `<div class="field"><label>Bark Key(App 首页 URL 里 api.day.app/ 后面那串)</label>
+        <input type="password" id="f-bark_key" value="${esc(c.bark_key)}" placeholder="未配置"></div>`;
+    } else if (ch.detail === "wled") {
+      detail = `<div class="field"><label>WLED 灯带 IP</label>
+        <input type="text" id="f-wled_ip" value="${esc(c.wled_ip)}" placeholder="例如 192.168.1.50"></div>`;
+    } else if (ch.detail === "sounds") {
+      detail = `<div class="form-row">
+        <div class="field"><label>完成音效文件</label><input type="text" id="f-sound_done" value="${esc(c.sound_done)}"></div>
+        <div class="field"><label>卡住音效文件</label><input type="text" id="f-sound_stuck" value="${esc(c.sound_stuck)}"></div></div>`;
+    }
+    el.innerHTML = `
+      <div class="row" style="flex:1">
+        <div class="info">
+          <div class="name">${ch.name}</div>
+          <div class="desc">${ch.desc}</div>
+        </div>
+        ${detail ? `<span class="expand" onclick="this.closest('.chan').classList.toggle('open')">配置 ▾</span>` : ""}
+        <label class="switch"><input type="checkbox" data-chan="${ch.key}" ${on ? "checked" : ""}><span class="track"></span></label>
+      </div>
+      <div class="chan-detail">${detail}</div>`;
+    wrap.appendChild(el);
+  }
+  $("f-min_task_seconds").value = c.min_task_seconds || "180";
+
+  const tw = $("notify-agent-toggles");
+  tw.innerHTML = "";
+  for (const id of ["claude-code", "pi", "codex"]) {
+    const on = !S.notify.enabledAgents.length || S.notify.enabledAgents.includes(id);
+    const label = S.agents[id].label;
+    tw.insertAdjacentHTML("beforeend",
+      `<label class="row" style="gap:7px;cursor:pointer">
+        <span class="switch"><input type="checkbox" data-agenttoggle="${id}" ${on ? "checked" : ""}><span class="track"></span></span>${label}</label>`);
+  }
+}
+
+async function saveNotify() {
+  const conf = {};
+  document.querySelectorAll("[data-chan]").forEach((el) => (conf[el.dataset.chan] = el.checked ? "yes" : "no"));
+  conf.min_task_seconds = $("f-min_task_seconds").value || "180";
+  const set = (id, key) => { const el = $(id); if (el && el.value.trim()) conf[key] = el.value.trim(); };
+  set("f-bark_key", "bark_key"); set("f-wled_ip", "wled_ip");
+  set("f-sound_done", "sound_done"); set("f-sound_stuck", "sound_stuck");
+  // agent 静音开关
+  const all = ["claude-code", "pi", "codex"];
+  const enabled = all.filter((id) => { const el = document.querySelector(`[data-agenttoggle="${id}"]`); return el && el.checked; });
+  conf.agents = enabled.length === all.length ? "" : enabled.join(",");
+  await api("/api/notify/conf", { method: "PUT", body: JSON.stringify({ conf }) });
+  toast("✅ 通知配置已保存,立即生效");
+  await loadState();
+}
+
+async function setMode(mode) {
+  const r = await api("/api/notify/mode", { method: "POST", body: JSON.stringify({ mode }) });
+  toast(r.output || "已切换");
+  await loadState();
+}
+
+async function testNotify(agent) {
+  const el = $(agent ? "notify-report" : "overview-report") || $("overview-report");
+  el.classList.add("show");
+  el.textContent = "发送中…";
+  try {
+    const r = await api("/api/notify/test", { method: "POST", body: JSON.stringify({ agent }) });
+    el.textContent = `【${agent || "全部"}】测试结果:\n` + (r.output || "(无输出)");
+  } catch (e) {
+    el.textContent = "测试失败: " + e.message;
+  }
+  await loadState();
+}
+
+// ---------- 模型与密钥 ----------
+function renderModels() {
+  const tabs = $("models-tabs");
+  tabs.innerHTML = "";
+  for (const id of ["claude-code", "pi", "codex"]) {
+    if (!S.agents[id].detected) continue;
+    const b = document.createElement("button");
+    b.textContent = S.agents[id].label;
+    b.className = id === modelsAgent ? "active" : "";
+    b.onclick = () => { modelsAgent = id; renderModels(); };
+    tabs.appendChild(b);
+  }
+  const panel = $("models-panel");
+  const a = S.agents[modelsAgent];
+  if (!a) { panel.innerHTML = `<div class="card"><div class="empty">该 agent 未安装</div></div>`; return; }
+
+  let html = "";
+  if (modelsAgent === "claude-code") {
+    const s = a.settings;
+    html = `
+    <div class="card">
+      <h2>模型</h2>
+      <div class="field"><label>默认模型(留空 = Claude Code 自行选择;如 claude-sonnet-4-5)</label>
+        <input type="text" id="c-cc-model" value="${esc(s.model)}" placeholder="claude-sonnet-4-5"></div>
+      <h3>API 接入(可选,写入 settings.json 的 env)</h3>
+      <div class="form-row">
+        <div class="field"><label>ANTHROPIC_BASE_URL(自定义网关)</label>
+          <input type="text" id="c-cc-baseurl" value="${esc(s.envAnthropicBaseUrl)}" placeholder="https://api.anthropic.com"></div>
+        <div class="field"><label>ANTHROPIC_API_KEY(留空 = 不修改;填 none 清除)</label>
+          <input type="password" id="c-cc-apikey" placeholder="${s.envAnthropicApiKeySet ? s.envAnthropicApiKeyMasked : "未设置"}"></div>
+      </div>
+      <button class="btn primary" onclick="saveClaudeCode()">💾 保存</button>
+    </div>`;
+  } else if (modelsAgent === "pi") {
+    const s = a.settings;
+    const rows = a.providers.map((p, i) => `
+      <tr>
+        <td class="mono">${esc(p.id)}</td>
+        <td class="mono">${esc(p.baseUrl)}</td>
+        <td class="mono">${esc(p.api)}</td>
+        <td class="mono">${p.apiKeySet ? esc(p.apiKeyMasked) : "<i class='muted'>无</i>"}</td>
+        <td class="muted mono">${esc(p.models.join(", ").slice(0, 60) || "-")}</td>
+        <td><div class="ops">
+          <button class="btn small" onclick="usePiProvider('${esc(p.id)}')">设为默认</button>
+          <button class="btn small" onclick="editPiProvider(${i})">改 Key</button>
+          <button class="btn small danger" onclick="delPiProvider('${esc(p.id)}')">删</button>
+        </div></td>
+      </tr>`).join("");
+    html = `
+    <div class="card">
+      <h2>默认模型</h2>
+      <div class="form-row">
+        <div class="field"><label>defaultProvider</label><input type="text" id="c-pi-provider" value="${esc(s.defaultProvider)}"></div>
+        <div class="field"><label>defaultModel</label><input type="text" id="c-pi-model" value="${esc(s.defaultModel)}"></div>
+      </div>
+      <button class="btn primary" onclick="savePi()">💾 保存</button>
+    </div>
+    <div class="card">
+      <h2 style="margin-bottom:4px">自定义 Provider(~/.pi/agent/models.json)</h2>
+      <div class="muted" style="margin-bottom:10px">API key 只在填写时更新,不会回显明文</div>
+      <table><thead><tr><th>ID</th><th>Base URL</th><th>API</th><th>API Key</th><th>模型</th><th></th></tr></thead>
+      <tbody>${rows || `<tr><td colspan="6" class="empty">暂无自定义 provider</td></tr>`}</tbody></table>
+      <h3>新增 Provider</h3>
+      <div class="form-row">
+        <div class="field"><label>ID(如 my-openai)</label><input type="text" id="c-pi-npid"></div>
+        <div class="field"><label>Base URL</label><input type="text" id="c-pi-npurl" placeholder="https://example.com/v1"></div>
+        <div class="field"><label>API 类型</label><select id="c-pi-npapi">
+          <option value="openai-completions">openai-completions</option>
+          <option value="anthropic-messages">anthropic-messages</option>
+          <option value="google-generative-ai">google-generative-ai</option>
+        </select></div>
+        <div class="field"><label>API Key</label><input type="password" id="c-pi-npkey"></div>
+      </div>
+      <button class="btn" onclick="addPiProvider()">＋ 添加</button>
+    </div>`;
+  } else if (modelsAgent === "codex") {
+    const s = a.settings;
+    const rows = a.providers.map((p) => `
+      <tr>
+        <td class="mono">${esc(p.id)}</td>
+        <td class="mono">${esc(p.baseUrl)}</td>
+        <td class="mono">${esc(p.envKey)}</td>
+        <td class="mono">${esc(p.wireApi)}</td>
+      </tr>`).join("");
+    html = `
+    <div class="card">
+      <h2>模型</h2>
+      <div class="form-row">
+        <div class="field"><label>model</label><input type="text" id="c-cx-model" value="${esc(s.model)}"></div>
+        <div class="field"><label>model_provider(对应下方 provider)</label><input type="text" id="c-cx-provider" value="${esc(s.modelProvider)}"></div>
+      </div>
+      <button class="btn primary" onclick="saveCodex()">💾 保存</button>
+    </div>
+    <div class="card">
+      <h2>API Key(~/.codex/auth.json)</h2>
+      <div class="field"><label>OPENAI_API_KEY(留空 = 不修改;填 none 清除)</label>
+        <input type="password" id="c-cx-apikey" placeholder="${a.auth.apiKeySet ? a.auth.apiKeyMasked : "未设置"}"></div>
+      <button class="btn primary" onclick="saveCodexAuth()">💾 保存 Key</button>
+    </div>
+    <div class="card">
+      <h2>Provider(config.toml [model_providers.*])</h2>
+      <table><thead><tr><th>ID</th><th>Base URL</th><th>env_key</th><th>wire_api</th></tr></thead>
+      <tbody>${rows || `<tr><td colspan="4" class="empty">暂无</td></tr>`}</tbody></table>
+      <div class="muted" style="margin-top:8px">Provider 表结构较复杂,如需增改请在「配置文件」页直接编辑 config.toml</div>
+    </div>`;
+  }
+  panel.innerHTML = html;
+}
+
+async function saveClaudeCode() {
+  const body = { model: $("c-cc-model").value.trim() };
+  const base = $("c-cc-baseurl").value.trim();
+  if (base) body.ANTHROPIC_BASE_URL = base;
+  const key = $("c-cc-apikey").value.trim();
+  if (key === "none") body.ANTHROPIC_API_KEY = "";
+  else if (key) body.ANTHROPIC_API_KEY = key;
+  await api("/api/agent/claude-code/config", { method: "PUT", body: JSON.stringify(body) });
+  toast("✅ Claude Code 配置已保存(新会话生效)");
+  await loadState();
+}
+
+async function savePi() {
+  const body = { defaultProvider: $("c-pi-provider").value.trim(), defaultModel: $("c-pi-model").value.trim() };
+  await api("/api/agent/pi/config", { method: "PUT", body: JSON.stringify(body) });
+  toast("✅ Pi 默认模型已保存(新会话生效)");
+  await loadState();
+}
+
+async function usePiProvider(id) {
+  const p = S.agents.pi.providers.find((x) => x.id === id);
+  const model = p && p.models.length ? p.models[0] : "";
+  await api("/api/agent/pi/config", { method: "PUT", body: JSON.stringify({ defaultProvider: id, defaultModel: model }) });
+  toast(`✅ 已把默认模型切到 ${id}${model ? " / " + model : ""}`);
+  await loadState();
+}
+
+async function editPiProvider(i) {
+  const p = S.agents.pi.providers[i];
+  const key = prompt(`更新 ${p.id} 的 API Key(留空取消,填 none 删除):`);
+  if (key === null) return;
+  await api("/api/agent/pi/providers", { method: "POST", body: JSON.stringify({ action: "update", id: p.id, newApiKey: key === "none" ? "none" : key }) });
+  toast(key === "none" ? "已删除该 provider 的 key" : "✅ API Key 已更新");
+  await loadState();
+}
+
+async function delPiProvider(id) {
+  if (!confirm(`删除 provider「${id}」?(${id} 的模型将不可用)`)) return;
+  await api("/api/agent/pi/providers", { method: "POST", body: JSON.stringify({ action: "delete", id }) });
+  toast("已删除 " + id);
+  await loadState();
+}
+
+async function addPiProvider() {
+  const id = $("c-pi-npid").value.trim();
+  if (!id) return toast("请填 Provider ID", true);
+  await api("/api/agent/pi/providers", { method: "POST", body: JSON.stringify({
+    action: "create", id,
+    baseUrl: $("c-pi-npurl").value.trim(),
+    api: $("c-pi-npapi").value,
+    newApiKey: $("c-pi-npkey").value.trim(),
+  })});
+  toast("✅ Provider 已添加;模型列表可稍后在「配置文件」里补充");
+  await loadState();
+}
+
+async function saveCodex() {
+  await api("/api/agent/codex/config", { method: "PUT", body: JSON.stringify({
+    model: $("c-cx-model").value.trim(), modelProvider: $("c-cx-provider").value.trim(),
+  })});
+  toast("✅ Codex 配置已保存(重启 codex 生效)");
+  await loadState();
+}
+
+async function saveCodexAuth() {
+  const key = $("c-cx-apikey").value.trim();
+  if (!key) return toast("留空 = 不修改", true);
+  await api("/api/agent/codex/auth", { method: "PUT", body: JSON.stringify({ apiKey: key === "none" ? "" : key }) });
+  toast("✅ Codex API Key 已保存");
+  await loadState();
+}
+
+// ---------- Skills ----------
+function renderSkills() {
+  const tabs = $("skills-tabs");
+  tabs.innerHTML = "";
+  const groups = [
+    { id: "claude-code", label: `Claude Code(${S.agents["claude-code"].skills.length})` },
+    { id: "pi", label: `Pi(${S.agents.pi.skills.length})` },
+    { id: "shared", label: `共享 ~/.agents(${S.shared.skills.length})` },
+  ];
+  for (const g of groups) {
+    const b = document.createElement("button");
+    b.textContent = g.label;
+    b.className = g.id === skillsAgent ? "active" : "";
+    b.onclick = () => { skillsAgent = g.id; renderSkills(); };
+    tabs.appendChild(b);
+  }
+  const skills = skillsAgent === "shared" ? S.shared.skills : S.agents[skillsAgent].skills;
+  const q = ($("skill-search") || {}).value || "";
+  const filtered = skills.filter((s) => !q || s.name.toLowerCase().includes(q.toLowerCase()));
+  const rows = filtered.map((s) => `
+    <tr>
+      <td class="mono">${esc(s.name)}${s.disabled ? ` <span class="badge off">已停用</span>` : ""}</td>
+      <td class="muted">${esc((s.description || s.fallbackTitle || "").slice(0, 90))}</td>
+      <td><div class="ops">
+        ${s.disabled ? `<button class="btn small" onclick="skillAction('enable','${esc(s.name)}')">启用</button>`
+                     : `<button class="btn small" onclick="skillAction('disable','${esc(s.name)}')">停用</button>`}
+        <button class="btn small danger" onclick="skillAction('delete','${esc(s.name)}')">删除</button>
+      </div></td>
+    </tr>`).join("");
+  $("skills-panel").innerHTML = `
+    <input type="text" id="skill-search" placeholder="🔍 按 name 过滤…" value="${esc(q)}" style="margin-bottom:10px" oninput="renderSkills()">
+    <div style="max-height:480px; overflow:auto; border:1px solid var(--border); border-radius:8px">
+    <table><tbody>${rows || `<tr><td class="empty">暂无 skills</td></tr>`}</tbody></table></div>`;
+  const search = $("skill-search");
+  if (search) { search.focus(); search.setSelectionRange(search.value.length, search.value.length); }
+}
+
+async function skillAction(action, name) {
+  if (action === "delete" && !confirm(`删除 skill「${name}」?不可恢复(建议先在磁盘备份)`)) return;
+  await api(`/api/skills/${skillsAgent}`, { method: "POST", body: JSON.stringify({ action, name }) });
+  toast(`✅ ${action === "enable" ? "已启用" : action === "disable" ? "已停用" : "已删除"} ${name}`);
+  await loadState();
+}
+
+async function createSkill() {
+  const name = $("skill-new-name").value.trim();
+  if (!name) return toast("请填写 skill 名称", true);
+  await api(`/api/skills/${skillsAgent}`, { method: "POST", body: JSON.stringify({ action: "create", name }) });
+  toast(`✅ 已创建 ${name}(含 SKILL.md 模板)`);
+  $("skill-new-name").value = "";
+  await loadState();
+}
+
+// ---------- 插件 ----------
+function renderPlugins() {
+  const panel = $("plugins-panel");
+  let html = "";
+  const pi = S.agents.pi;
+  const extRows = pi.extensions.map((e) => `
+    <tr><td class="mono">${esc(e.name)}</td><td class="muted">${esc(e.desc)}</td>
+    <td><div class="ops"><button class="btn small danger" onclick="delPiExt('${esc(e.name)}')">删除</button></div></td></tr>`).join("");
+  const pkgRows = pi.packages.map((p) => `
+    <tr><td class="mono">${esc(p.name)}</td><td><span class="badge">${p.kind}</span></td>
+    <td class="muted">${esc(p.version)}</td><td class="muted">${esc(p.desc)}</td></tr>`).join("");
+  const cc = S.agents["claude-code"];
+  const pluginRows = cc.plugins.map((p) => `
+    <tr><td class="mono">${esc(p.name)}</td><td class="muted">${esc(p.repo)}</td>
+    <td class="muted">${esc(p.version)}</td><td class="muted">${esc(p.desc)}</td></tr>`).join("");
+  html += `
+  <div class="card">
+    <h2 style="margin-bottom:4px">Pi 扩展(~/.pi/agent/extensions/)</h2>
+    <div class="muted" style="margin-bottom:10px">删除前自动备份;正在运行的会话执行 /reload 后生效</div>
+    <table><tbody>${extRows || `<tr><td class="empty">暂无扩展</td></tr>`}</tbody></table>
+    <h3>Pi 包(npm / git 安装,只读展示)</h3>
+    <table><tbody>${pkgRows || `<tr><td class="empty">暂无包</td></tr>`}</tbody></table>
+  </div>
+  <div class="card">
+    <h2 style="margin-bottom:4px">Claude Code 插件(~/.claude/plugins/)</h2>
+    <table><tbody>${pluginRows || `<tr><td class="empty">暂无插件</td></tr>`}</tbody></table>
+    <div class="muted" style="margin-top:8px">插件启用/禁用请用 Claude Code 的 /plugin 命令</div>
+  </div>
+  <div class="card">
+    <h2 style="margin-bottom:4px">Codex</h2>
+    <div class="empty">Codex 无插件系统(配置见「模型与密钥」)</div>
+  </div>`;
+  panel.innerHTML = html;
+}
+
+async function delPiExt(name) {
+  if (!confirm(`删除 Pi 扩展「${name}」?(删除前自动备份)`)) return;
+  await api("/api/agent/pi/extensions", { method: "POST", body: JSON.stringify({ action: "delete", name }) });
+  toast("已删除扩展 " + name);
+  await loadState();
+}
+
+// ---------- 配置文件 ----------
+let currentFile = "";
+async function initFiles() {
+  const r = await api("/api/files");
+  const sel = $("file-select");
+  sel.innerHTML = r.files.map((f) => `<option value="${esc(f.path)}">${f.label}</option>`).join("");
+  currentFile = r.files.length ? r.files[0].path : "";
+  if (currentFile) await loadFile();
+}
+async function loadFile() {
+  currentFile = $("file-select").value;
+  const r = await api("/api/files/read", { method: "POST", body: JSON.stringify({ path: currentFile }) });
+  $("file-editor").value = r.content;
+  $("file-report").classList.remove("show");
+}
+async function saveFile() {
+  const content = $("file-editor").value;
+  try {
+    await api("/api/files/write", { method: "POST", body: JSON.stringify({ path: currentFile, content }) });
+    toast("✅ 已保存(原文件备份为 *.bak-cockpit)");
+  } catch (e) {
+    toast("保存失败: " + e.message, true);
+  }
+}
+
+// ---------- 启动 ----------
+function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
+
+async function loadState() {
+  S = await api("/api/state");
+  $("version").textContent = "v" + S.cockpit.version + " · :" + S.cockpit.port;
+  renderOverview();
+  renderNotify();
+  renderModels();
+  renderSkills();
+  renderPlugins();
+}
+
+loadState().catch((e) => toast("加载失败: " + e.message, true));
+</script>
+</body>
+</html>

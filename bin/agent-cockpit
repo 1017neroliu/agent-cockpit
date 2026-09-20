@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# agent-cockpit 启动器
+# 用法:
+#   agent-cockpit          后台启动(若未运行)并打开浏览器
+#   agent-cockpit stop     停止服务
+#   agent-cockpit status   查看运行状态
+#   agent-cockpit serve    前台运行(调试)
+set -u
+DIR="$(cd "$(dirname "$0")/.." && pwd)"
+PID_FILE="/tmp/agent-cockpit.pid"
+LOG_FILE="/tmp/agent-cockpit.log"
+PORT="${COCKPIT_PORT:-8620}"
+
+# 找 node:优先 PATH,其次 pi 自带的 node
+find_node() {
+    if command -v node >/dev/null 2>&1; then command -v node; return; fi
+    for n in "$HOME"/.local/share/pi-node/*/bin/node; do
+        [ -x "$n" ] && { echo "$n"; return; }
+    done
+    echo ""
+}
+
+is_running() {
+    [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null
+}
+
+open_browser() {
+    local url="http://127.0.0.1:$PORT"
+    if command -v xdg-open >/dev/null 2>&1; then xdg-open "$url" >/dev/null 2>&1 &
+    elif command -v open >/dev/null 2>&1; then open "$url" >/dev/null 2>&1 &
+    fi
+}
+
+case "${1:-start}" in
+    stop)
+        if is_running; then
+            kill "$(cat "$PID_FILE")" && rm -f "$PID_FILE"
+            echo "agent-cockpit 已停止"
+        else
+            echo "未在运行"
+            rm -f "$PID_FILE"
+        fi
+        ;;
+    status)
+        if is_running; then echo "运行中: http://127.0.0.1:$PORT (pid $(cat "$PID_FILE"))"; else echo "未运行"; fi
+        ;;
+    serve)
+        NODE="$(find_node)"
+        [ -z "$NODE" ] && { echo "未找到 node(请安装 node 或确认 pi 已安装)"; exit 1; }
+        exec "$NODE" "$DIR/server/server.js"
+        ;;
+    start|restart)
+        if [ "${1:-}" = "restart" ] && is_running; then
+            kill "$(cat "$PID_FILE")"; rm -f "$PID_FILE"; sleep 0.5
+        fi
+        if is_running; then
+            echo "已在运行: http://127.0.0.1:$PORT"
+            open_browser
+            exit 0
+        fi
+        NODE="$(find_node)"
+        [ -z "$NODE" ] && { echo "未找到 node(请安装 node 或确认 pi 已安装)"; exit 1; }
+        nohup "$NODE" "$DIR/server/server.js" > "$LOG_FILE" 2>&1 &
+        echo $! > "$PID_FILE"
+        sleep 1
+        if is_running; then
+            echo "✅ agent-cockpit 已启动: http://127.0.0.1:$PORT (日志: $LOG_FILE)"
+            open_browser
+        else
+            echo "❌ 启动失败,日志:"; tail -5 "$LOG_FILE"
+            exit 1
+        fi
+        ;;
+    *)
+        echo "用法: agent-cockpit [start|stop|status|serve|restart]"
+        ;;
+esac
