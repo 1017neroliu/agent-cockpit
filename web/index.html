@@ -588,7 +588,6 @@ function renderSkills() {
   const groups = [
     { id: "claude-code", label: `Claude Code(${S.agents["claude-code"].skills.length})` },
     { id: "pi", label: `Pi(${S.agents.pi.skills.length})` },
-    { id: "shared", label: `共享 ~/.agents(${S.shared.skills.length})` },
   ];
   for (const g of groups) {
     const b = document.createElement("button");
@@ -597,12 +596,13 @@ function renderSkills() {
     b.onclick = () => { skillsAgent = g.id; renderSkills(); };
     tabs.appendChild(b);
   }
-  const skills = skillsAgent === "shared" ? S.shared.skills : S.agents[skillsAgent].skills;
+  const skills = S.agents[skillsAgent].skills;
   const q = ($("skill-search") || {}).value || "";
   const filtered = skills.filter((s) => !q || s.name.toLowerCase().includes(q.toLowerCase()));
   const rows = filtered.map((s) => `
     <tr>
       <td class="mono">${esc(s.name)}${s.disabled ? ` <span class="badge off">已停用</span>` : ""}</td>
+      <td>${s.source === "shared" ? `<span class="badge" title="~/.agents/skills(软链自 ~/.claude/skills)">共享</span>` : "<span class=\"badge on\">专属</span>"}</td>
       <td class="muted">${esc((s.description || s.fallbackTitle || "").slice(0, 90))}</td>
       <td><div class="ops">
         ${s.disabled ? `<button class="btn small" onclick="skillAction('enable','${esc(s.name)}')">启用</button>`
@@ -611,9 +611,11 @@ function renderSkills() {
       </div></td>
     </tr>`).join("");
   $("skills-panel").innerHTML = `
+    <div class="muted" style="margin-bottom:8px">$S.agents[skillsAgent].skills.some(s=>s.source==="shared") ? "包含共享项:位于 ~/.agents/skills(软链自 ~/.claude/skills,与 Claude 双端同步,删除仅移除软链)" : ""}</div>
     <input type="text" id="skill-search" placeholder="🔍 按 name 过滤…" value="${esc(q)}" style="margin-bottom:10px" oninput="renderSkills()">
     <div style="max-height:480px; overflow:auto; border:1px solid var(--border); border-radius:8px">
-    <table><tbody>${rows || `<tr><td class="empty">暂无 skills</td></tr>`}</tbody></table></div>`;
+    <table><thead><tr><th>名称</th><th>来源</th><th>描述</th><th></th></tr></thead>
+    <tbody>${rows || `<tr><td colspan="4" class="empty">暂无 skills</td></tr>`}</tbody></table></div>`;
   const search = $("skill-search");
   if (search) { search.focus(); search.setSelectionRange(search.value.length, search.value.length); }
 }
@@ -643,8 +645,9 @@ function renderPlugins() {
     <tr><td class="mono">${esc(e.name)}</td><td class="muted">${esc(e.desc)}</td>
     <td><div class="ops"><button class="btn small danger" onclick="delPiExt('${esc(e.name)}')">删除</button></div></td></tr>`).join("");
   const pkgRows = pi.packages.map((p) => `
-    <tr><td class="mono">${esc(p.name)}</td><td><span class="badge">${p.kind}</span></td>
-    <td class="muted">${esc(p.version)}</td><td class="muted">${esc(p.desc)}</td></tr>`).join("");
+    <tr><td class="mono">${esc(p.spec)}</td><td><span class="badge">${p.kind}</span></td>
+    <td class="mono">${esc(p.version || "-")}</td><td class="muted">${esc(p.desc)}</td>
+    <td>${p.installed ? '<span class="badge on">已安装</span>' : '<span class="badge off">未找到</span>'}</td></tr>`).join("");
   const cc = S.agents["claude-code"];
   const pluginRows = cc.plugins.map((p) => `
     <tr><td class="mono">${esc(p.name)}</td><td class="muted">${esc(p.repo)}</td>
@@ -654,8 +657,9 @@ function renderPlugins() {
     <h2 style="margin-bottom:4px">Pi 扩展(~/.pi/agent/extensions/)</h2>
     <div class="muted" style="margin-bottom:10px">删除前自动备份;正在运行的会话执行 /reload 后生效</div>
     <table><tbody>${extRows || `<tr><td class="empty">暂无扩展</td></tr>`}</tbody></table>
-    <h3>Pi 包(npm / git 安装,只读展示)</h3>
-    <table><tbody>${pkgRows || `<tr><td class="empty">暂无包</td></tr>`}</tbody></table>
+    <h3>Pi 包(pi install 安装,来源:settings.json 的 packages)</h3>
+    <table><thead><tr><th>包</th><th>类型</th><th>版本</th><th>描述</th><th>状态</th></tr></thead>
+    <tbody>${pkgRows || `<tr><td colspan="5" class="empty">暂无包</td></tr>`}</tbody></table>
   </div>
   <div class="card">
     <h2 style="margin-bottom:4px">Claude Code 插件(~/.claude/plugins/)</h2>

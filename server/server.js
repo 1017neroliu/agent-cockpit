@@ -206,7 +206,7 @@ function parseSkillMd(file) {
 	}
 }
 
-function listSkills(dir) {
+function listSkills(dir, source) {
 	const out = [];
 	let entries = [];
 	try {
@@ -215,16 +215,22 @@ function listSkills(dir) {
 		return out;
 	}
 	for (const e of entries) {
-		const base = e.name.replace(/\.disabled$/, "");
+		const full = path.join(dir, e.name);
+		let isDir = false;
+		try {
+			isDir = fs.statSync(full).isDirectory(); // statSync 跟随软链(pi 的 ~/.agents/skills 里是软链)
+		} catch {
+			continue; // 失效链接等
+		}
+		const disabled = e.name.endsWith(".disabled");
 		if (e.isFile() && e.name.endsWith(".md")) {
-			// 单文件 skill:xxx.md
-			const meta = parseSkillMd(path.join(dir, e.name));
-			out.push({ name: base.replace(/\.md$/, ""), dir: false, disabled: e.name.endsWith(".disabled"), ...meta });
-		} else if (e.isDirectory()) {
-			const skillMd = path.join(dir, e.name, "SKILL.md");
+			const meta = parseSkillMd(full);
+			out.push({ name: e.name.replace(/\.md(\.disabled)?$/, ""), dir: false, disabled, source, ...meta });
+		} else if (isDir) {
+			const skillMd = path.join(full, "SKILL.md");
 			if (fs.existsSync(skillMd)) {
 				const meta = parseSkillMd(skillMd);
-				out.push({ name: base, dir: true, disabled: e.name.endsWith(".disabled"), ...meta });
+				out.push({ name: e.name.replace(/\.disabled$/, ""), dir: true, disabled, source, ...meta });
 			}
 		}
 	}
@@ -265,20 +271,35 @@ function firstComment(file) {
 }
 
 async function listPiPackages() {
+	// 包清单以 settings.json 的 packages 为准(npm:xxx / git:xxx),再从安装目录读版本/描述
+	const settings = await readJson(P.piSettings) || {};
 	const out = [];
-	for (const base of [P.piNpmDir, P.piGitDir]) {
-		const kind = base === P.piNpmDir ? "npm" : "git";
-		let entries = [];
-		try {
-			entries = await fsp.readdir(base, { withFileTypes: true });
-		} catch {
-			continue;
+	for (const spec of settings.packages || []) {
+		const m = String(spec).match(/^(npm|git):(.+)$/);
+		const kind = m ? m[1] : "unknown";
+		const name = m ? m[2] : String(spec);
+		let installDir = null;
+		if (kind === "npm") {
+			installDir = path.join(P.piNpmDir, "node_modules", name);
+		} else if (kind === "git") {
+			// git 包装在 ~/.pi/agent/git/<host>/<user>/<repo>,逐层找 package.json
+			const gitBase = path.join(HOME, ".pi", "agent", "git");
+			try {
+				outer: for (const d1 of fs.readdirSync(gitBase, { withFileTypes: true })) {
+					if (!d1.isDirectory()) continue;
+					const p1 = path.join(gitBase, d1.name);
+					if (fs.existsSync(path.join(p1, "package.json"))) { installDir = p1; break; }
+					for (const d2 of fs.readdirSync(p1, { withFileTypes: true })) {
+						if (d2.isDirectory() && fs.existsSync(path.join(p1, d2.name, "package.json"))) {
+							installDir = path.join(p1, d2.name);
+							break outer;
+						}
+					}
+				}
+			} catch {}
 		}
-		for (const e of entries) {
-			if (!e.isDirectory()) continue;
-			const pkg = await readJson(path.join(base, e.name, "package.json"));
-			out.push({ name: e.name, kind, version: pkg?.version || "", desc: (pkg?.description || "").slice(0, 120) });
-		}
+		const pkg = installDir ? await readJson(path.join(installDir, "package.json")) : null;
+		out.push({ spec, name: pkg?.name || name, kind, version: pkg?.version || "", desc: (pkg?.description || "").slice(0, 120), installed: Boolean(pkg) });
 	}
 	return out;
 }
@@ -333,6 +354,9 @@ async function buildState() {
 			});
 		}
 	}
+	// Pi 的 skills = 专属目录 + 共享目录(~/.agents/skills,pi 会同时读取)
+	const piOwnSkills = listSkills(P.piSkillsDir, "专属");
+	const sharedSkills = listSkills(P.sharedSkillsDir, "共享");
 	state.agents.pi = {
 		detected: fs.existsSync(P.piSettings),
 		label: AGENTS.pi.label,
@@ -342,7 +366,7 @@ async function buildState() {
 			theme: piSettings.theme || "",
 		},
 		providers: piProviders,
-		skills: listSkills(P.piSkillsDir),
+		skills: [...piOwnSkills, ...sharedSkills].sort((a, b) => a.name.localeCompare(b.name)),
 		extensions: listPiExtensions(),
 		packages: await listPiPackages(),
 	};
@@ -358,7 +382,7 @@ async function buildState() {
 			envAnthropicApiKeyMasked: maskKey(claudeSettings.env?.ANTHROPIC_API_KEY || ""),
 			envAnthropicApiKeySet: Boolean(claudeSettings.env?.ANTHROPIC_API_KEY),
 		},
-		skills: listSkills(P.claudeSkillsDir),
+		skills: listSkills(P.claudeSkillsDir, "专属"),
 		plugins: await listClaudePlugins(),
 	};
 
@@ -389,8 +413,8 @@ async function buildState() {
 		},
 	};
 
-	// 共享 skills
-	state.shared.skills = listSkills(P.sharedSkillsDir);
+	// 共享 skills(pi 侧已合并展示,这里保留供单独查看)
+	state.shared.skills = sharedSkills;
 
 	return state;
 }
@@ -475,40 +499,49 @@ async function saveCodexAuth(apiKey) {
 }
 
 // skills / 扩展管理
+function skillDirsFor(agent) {
+	if (agent === "pi") return [P.piSkillsDir, P.sharedSkillsDir]; // pi 两个目录都会加载
+	if (agent === "claude-code") return [P.claudeSkillsDir];
+	if (agent === "shared") return [P.sharedSkillsDir];
+	return [];
+}
+
 async function manageSkill(agent, action, name) {
-	const dirs = {
-		pi: P.piSkillsDir,
-		"claude-code": P.claudeSkillsDir,
-		shared: P.sharedSkillsDir,
-	};
-	const dir = dirs[agent];
-	if (!dir) throw new Error("未知 agent: " + agent);
-	const disabled = (n) => path.join(dir, n + ".disabled");
-	const enabled = (n) => {
-		const p1 = path.join(dir, n);
-		if (fs.existsSync(p1)) return p1;
-		return path.join(dir, n + ".disabled");
+	const dirs = skillDirsFor(agent);
+	if (!dirs.length) throw new Error("未知 agent: " + agent);
+	const findEntry = () => {
+		for (const dir of dirs) {
+			for (const cand of [name, name + ".disabled", name + ".md", name + ".md.disabled"]) {
+				const p = path.join(dir, cand);
+				if (fs.existsSync(p)) return p;
+			}
+		}
+		return null;
 	};
 	switch (action) {
 		case "delete": {
-			const target = enabled(name);
+			const target = findEntry();
+			if (!target) throw new Error("未找到: " + name);
 			await fsp.rm(target, { recursive: true, force: true });
 			return { deleted: target };
 		}
 		case "disable": {
-			const target = enabled(name);
-			const dest = disabled(name);
+			const target = findEntry();
+			if (!target) throw new Error("未找到: " + name);
+			if (target.endsWith(".disabled")) throw new Error("已是停用状态");
+			const dest = target + ".disabled";
 			await fsp.rename(target, dest);
 			return { disabled: dest };
 		}
 		case "enable": {
-			const target = disabled(name);
-			if (!fs.existsSync(target)) throw new Error("未找到(可能本就启用): " + name);
-			await fsp.rename(target, path.join(dir, name));
+			const target = findEntry();
+			if (!target) throw new Error("未找到: " + name);
+			if (!target.endsWith(".disabled")) throw new Error("已是启用状态");
+			await fsp.rename(target, target.slice(0, -".disabled".length));
 			return { enabled: name };
 		}
 		case "create": {
-			const skillDir = path.join(dir, name);
+			const skillDir = path.join(dirs[0], name);
 			if (fs.existsSync(skillDir)) throw new Error("已存在: " + name);
 			const tpl = `---\nname: ${name}\ndescription: 在这里写这个 skill 的用途(何时使用它)\n---\n\n# ${name}\n\n在这里写具体步骤/指南。\n`;
 			await fsp.mkdir(skillDir, { recursive: true });
@@ -634,13 +667,15 @@ const server = http.createServer(async (req, res) => {
 		}
 
 		// ---- 原始配置文件 ----
-		if (route === "/api/files" && req.method === "GET") {
+			if (route === "/api/files" && req.method === "GET") {
 			const files = [
 				{ id: "notify", label: "agent-notify 通知配置", path: P.agentNotifyConf, lang: "ini" },
 				{ id: "pi-settings", label: "Pi 设置", path: P.piSettings, lang: "json" },
 				{ id: "pi-models", label: "Pi 模型/Provider", path: P.piModels, lang: "json" },
+				{ id: "pi-auth", label: "Pi 登录凭据", path: P.piAuth, lang: "json" },
 				{ id: "claude-settings", label: "Claude Code 设置", path: P.claudeSettings, lang: "json" },
 				{ id: "codex-config", label: "Codex 配置 (TOML)", path: P.codexConfig, lang: "toml" },
+				{ id: "codex-auth", label: "Codex 认证 (auth.json)", path: P.codexAuth, lang: "json" },
 			].filter((f) => fs.existsSync(f.path));
 			return json(res, 200, { files });
 		}
