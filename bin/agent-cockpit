@@ -25,7 +25,12 @@ find_node() {
 }
 
 is_running() {
-    [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null
+    if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then return 0; fi
+    # pid 文件丢失/陈旧时,按命令行兑底查找真实进程,并自愈 pid 文件
+    local p
+    p=$(pgrep -f "agent-cockpit/server/server\.js" 2>/dev/null | head -1)
+    [ -n "$p" ] && { echo "$p" > "$PID_FILE"; return 0; }
+    return 1
 }
 
 open_browser() {
