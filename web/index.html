@@ -419,6 +419,19 @@ function renderModels() {
   let html = "";
   if (modelsAgent === "claude-code") {
     const s = a.settings;
+    const rows = (a.providers || []).map((p) => `
+      <tr>
+        <td class="mono">${esc(p.id)}</td>
+        <td class="mono">${esc(p.baseUrl)}</td>
+        <td class="mono">${p.model ? esc(p.model) : "<i class='muted'>-</i>"}</td>
+        <td class="mono">${p.authStyle === "api-key" ? "x-api-key" : "Bearer"}</td>
+        <td class="mono">${p.apiKeySet ? esc(p.apiKeyMasked) : "<i class='muted'>无</i>"}</td>
+        <td><div class="ops">
+          <button class="btn small" onclick="useClaudeProvider('${esc(p.id)}')">设为默认</button>
+          <button class="btn small" onclick="editClaudeKey('${esc(p.id)}')">改 Key</button>
+          <button class="btn small danger" onclick="delClaudeProvider('${esc(p.id)}')">删</button>
+        </div></td>
+      </tr>`).join("");
     html = `
     <div class="card">
       <h2>模型</h2>
@@ -426,12 +439,32 @@ function renderModels() {
         <input type="text" id="c-cc-model" value="${esc(s.model)}" placeholder="claude-sonnet-4-5"></div>
       <h3>API 接入(可选,写入 settings.json 的 env)</h3>
       <div class="form-row">
-        <div class="field"><label>ANTHROPIC_BASE_URL(自定义网关)</label>
+        <div class="field"><label>ANTHROPIC_BASE_URL(不含 /v1,Claude 自动拼接 /v1/messages)</label>
           <input type="text" id="c-cc-baseurl" value="${esc(s.envAnthropicBaseUrl)}" placeholder="https://api.anthropic.com"></div>
-        <div class="field"><label>ANTHROPIC_API_KEY(留空 = 不修改;填 none 清除)</label>
+        <div class="field"><label>ANTHROPIC_AUTH_TOKEN(Bearer 认证,llmops 网关用这个;留空不动,填 none 清除)</label>
+          <input type="password" id="c-cc-authtoken" placeholder="${s.envAnthropicAuthTokenSet ? s.envAnthropicAuthTokenMasked : "未设置"}"></div>
+        <div class="field"><label>ANTHROPIC_API_KEY(x-api-key 认证;留空不动,填 none 清除)</label>
           <input type="password" id="c-cc-apikey" placeholder="${s.envAnthropicApiKeySet ? s.envAnthropicApiKeyMasked : "未设置"}"></div>
       </div>
       <button class="btn primary" onclick="saveClaudeCode()">💾 保存</button>
+    </div>
+    <div class="card">
+      <h2 style="margin-bottom:4px">Provider 配方(~/.agent-cockpit/claude-providers.json)</h2>
+      <div class="muted" style="margin-bottom:10px">Claude Code 原生只认 settings.json 里单份网关配置,这里存多份配方;「设为默认」= 把配方写入 settings.json(重启 claude 生效)。配方含明文 key,文件权限 0600;首次已自动从 Pi 的 anthropic-messages provider 导入。</div>
+      <table><thead><tr><th>ID</th><th>Base URL</th><th>默认模型</th><th>认证</th><th>API Key</th><th></th></tr></thead>
+      <tbody>${rows || `<tr><td colspan="6" class="empty">暂无配方</td></tr>`}</tbody></table>
+      <h3>新增配方</h3>
+      <div class="form-row">
+        <div class="field"><label>ID(如 llmops-anthropic)</label><input type="text" id="c-cc-npid"></div>
+        <div class="field"><label>Base URL</label><input type="text" id="c-cc-npurl" placeholder="https://example.com"></div>
+        <div class="field"><label>API Key</label><input type="password" id="c-cc-npkey"></div>
+        <div class="field"><label>认证方式</label><select id="c-cc-npauth">
+          <option value="bearer">Bearer(ANTHROPIC_AUTH_TOKEN,llmops 网关用这个)</option>
+          <option value="api-key">x-api-key(ANTHROPIC_API_KEY)</option>
+        </select></div>
+        <div class="field"><label>默认模型(可选)</label><input type="text" id="c-cc-npmodel" placeholder="如 anthropic/glm-5[1m]"></div>
+      </div>
+      <button class="btn" onclick="addClaudeProvider()">＋ 添加</button>
     </div>`;
   } else if (modelsAgent === "pi") {
     const s = a.settings;
@@ -441,10 +474,11 @@ function renderModels() {
         <td class="mono">${esc(p.baseUrl)}</td>
         <td class="mono">${esc(p.api)}</td>
         <td class="mono">${p.apiKeySet ? esc(p.apiKeyMasked) : "<i class='muted'>无</i>"}</td>
-        <td class="muted mono">${esc(p.models.join(", ").slice(0, 60) || "-")}</td>
+        <td class="muted mono" title="${esc(p.models.join(", "))}">${esc(p.models.join(", ").slice(0, 60) || "-")}</td>
         <td><div class="ops">
           <button class="btn small" onclick="usePiProvider('${esc(p.id)}')">设为默认</button>
           <button class="btn small" onclick="editPiProvider(${i})">改 Key</button>
+          <button class="btn small" onclick="editPiModels(${i})">改模型</button>
           <button class="btn small danger" onclick="delPiProvider('${esc(p.id)}')">删</button>
         </div></td>
       </tr>`).join("");
@@ -468,10 +502,12 @@ function renderModels() {
         <div class="field"><label>Base URL</label><input type="text" id="c-pi-npurl" placeholder="https://example.com/v1"></div>
         <div class="field"><label>API 类型</label><select id="c-pi-npapi">
           <option value="openai-completions">openai-completions</option>
+          <option value="openai-responses">openai-responses</option>
           <option value="anthropic-messages">anthropic-messages</option>
           <option value="google-generative-ai">google-generative-ai</option>
         </select></div>
         <div class="field"><label>API Key</label><input type="password" id="c-pi-npkey"></div>
+        <div class="field"><label>模型 ID(逗号分隔,可多个)</label><input type="text" id="c-pi-npmodels" placeholder="如 gpt-5.1, gpt-5.1-mini"></div>
       </div>
       <button class="btn" onclick="addPiProvider()">＋ 添加</button>
     </div>`;
@@ -480,9 +516,18 @@ function renderModels() {
     const rows = a.providers.map((p) => `
       <tr>
         <td class="mono">${esc(p.id)}</td>
+        <td class="mono">${esc(p.name || "-")}</td>
         <td class="mono">${esc(p.baseUrl)}</td>
-        <td class="mono">${esc(p.envKey)}</td>
+        <td class="mono">${p.envKey ? esc(p.envKey) : "<i class='muted'>auth.json</i>"}</td>
         <td class="mono">${esc(p.wireApi)}</td>
+        <td class="muted mono" title="${esc((p.models || []).join(", "))}">${esc((p.models || []).join(", ").slice(0, 40) || "-")}</td>
+        <td><div class="ops">
+          <button class="btn small" onclick="useCodexProvider('${esc(p.id)}')">设为默认</button>
+          <button class="btn small" onclick="editCodexModels('${esc(p.id)}')">改模型</button>
+          <button class="btn small" onclick="genCodexProfile('${esc(p.id)}')" title="按模型列表生成 model-catalogs JSON + profile,使 codex --profile <id> 内 /model 可见">生成 /model</button>
+          <button class="btn small" onclick="editCodexProvider('${esc(p.id)}')">编辑</button>
+          <button class="btn small danger" onclick="delCodexProvider('${esc(p.id)}')">删</button>
+        </div></td>
       </tr>`).join("");
     html = `
     <div class="card">
@@ -500,10 +545,22 @@ function renderModels() {
       <button class="btn primary" onclick="saveCodexAuth()">💾 保存 Key</button>
     </div>
     <div class="card">
-      <h2>Provider(config.toml [model_providers.*])</h2>
-      <table><thead><tr><th>ID</th><th>Base URL</th><th>env_key</th><th>wire_api</th></tr></thead>
-      <tbody>${rows || `<tr><td colspan="4" class="empty">暂无</td></tr>`}</tbody></table>
-      <div class="muted" style="margin-top:8px">Provider 表结构较复杂,如需增改请在「配置文件」页直接编辑 config.toml</div>
+      <h2 style="margin-bottom:4px">Provider(~/.codex/config.toml [model_providers.*])</h2>
+      <div class="muted" style="margin-bottom:10px">key 走 env_key 时需自行把变量写入 ~/.bashrc(面板不代管 shell 环境);不填 env_key 则使用上方 auth.json 的 key。模型列表为面板扩展字段(codex 本身忽略),供展示与「设为默认」选择;codex 内 /model 列表由 model-catalogs + profile 决定——已生成: ${(a.profiles || []).map((pf) => esc(pf.file)).join("、") || "无(点行内「生成 /model」可自动生成)"}。</div>
+      <table><thead><tr><th>ID</th><th>名称</th><th>Base URL</th><th>env_key</th><th>wire_api</th><th>模型</th><th></th></tr></thead>
+      <tbody>${rows || `<tr><td colspan="7" class="empty">暂无</td></tr>`}</tbody></table>
+      <h3>新增 Provider</h3>
+      <div class="form-row">
+        <div class="field"><label>ID(如 my-gateway)</label><input type="text" id="c-cx-npid"></div>
+        <div class="field"><label>显示名(可选)</label><input type="text" id="c-cx-npname"></div>
+        <div class="field"><label>Base URL</label><input type="text" id="c-cx-npurl" placeholder="https://example.com/v1"></div>
+        <div class="field"><label>env_key(环境变量名,可选)</label><input type="text" id="c-cx-npkey" placeholder="MY_API_KEY"></div>
+        <div class="field"><label>模型 ID(逗号分隔,可选)</label><input type="text" id="c-cx-npmodels" placeholder="如 openai/glm-5[1m], openai/glm-5.3"></div>
+        <div class="field"><label>wire_api(codex 0.146+ 仅支持 responses)</label><select id="c-cx-npwire">
+          <option value="responses">responses</option>
+        </select></div>
+      </div>
+      <button class="btn" onclick="addCodexProvider()">＋ 添加</button>
     </div>`;
   }
   panel.innerHTML = html;
@@ -516,8 +573,49 @@ async function saveClaudeCode() {
   const key = $("c-cc-apikey").value.trim();
   if (key === "none") body.ANTHROPIC_API_KEY = "";
   else if (key) body.ANTHROPIC_API_KEY = key;
+  const tok = $("c-cc-authtoken").value.trim();
+  if (tok === "none") body.ANTHROPIC_AUTH_TOKEN = "";
+  else if (tok) body.ANTHROPIC_AUTH_TOKEN = tok;
   await api("/api/agent/claude-code/config", { method: "PUT", body: JSON.stringify(body) });
   toast("✅ Claude Code 配置已保存(新会话生效)");
+  await loadState();
+}
+
+async function useClaudeProvider(id) {
+  if (!confirm(`把配方「${id}」写入 settings.json 作为当前网关?(重启 claude code 生效)`)) return;
+  const r = await api("/api/agent/claude-code/providers", { method: "POST", body: JSON.stringify({ action: "apply", id }) });
+  const a = (r && r.applied) || {};
+  toast(`✅ 已应用 ${id}: ${a.baseUrl || ""}${a.model ? " / " + a.model : ""}(新会话生效)`);
+  await loadState();
+}
+
+async function editClaudeKey(id) {
+  const key = prompt(`更新 ${id} 的 API Key(留空取消;填 none 删除配方中的 key):`);
+  if (key === null) return;
+  await api("/api/agent/claude-code/providers", { method: "POST", body: JSON.stringify({ action: "update", id, newApiKey: key === "none" ? "none" : key }) });
+  toast(key === "none" ? "已删除配方中的 key" : "✅ API Key 已更新");
+  await loadState();
+}
+
+async function delClaudeProvider(id) {
+  if (!confirm(`删除配方「${id}」?(不影响 settings.json 当前生效配置)`)) return;
+  await api("/api/agent/claude-code/providers", { method: "POST", body: JSON.stringify({ action: "delete", id }) });
+  toast("已删除 " + id);
+  await loadState();
+}
+
+async function addClaudeProvider() {
+  const id = $("c-cc-npid").value.trim();
+  if (!id) return toast("请填 Provider ID", true);
+  if (!$("c-cc-npurl").value.trim()) return toast("请填 Base URL", true);
+  await api("/api/agent/claude-code/providers", { method: "POST", body: JSON.stringify({
+    action: "create", id,
+    baseUrl: $("c-cc-npurl").value.trim(),
+    newApiKey: $("c-cc-npkey").value.trim(),
+    authStyle: $("c-cc-npauth").value,
+    model: $("c-cc-npmodel").value.trim(),
+  })});
+  toast("✅ 配方已添加");
   await loadState();
 }
 
@@ -530,9 +628,26 @@ async function savePi() {
 
 async function usePiProvider(id) {
   const p = S.agents.pi.providers.find((x) => x.id === id);
-  const model = p && p.models.length ? p.models[0] : "";
+  if (!p || !p.models.length) return toast(`provider「${id}」还没配模型,请先点「改模型」填写`, true);
+  let model = p.models[0];
+  if (p.models.length > 1) {
+    const input = prompt(
+      `${p.id} 有 ${p.models.length} 个模型,设哪个为默认?\n` +
+      p.models.map((m, i) => `${i + 1}. ${m}`).join("\n") +
+      "\n输入序号或模型 ID(直接确定选第 1 个):",
+      p.models[0]
+    );
+    if (input === null) return;
+    const t = input.trim();
+    if (t) {
+      const byIdx = /^\d+$/.test(t) ? p.models[parseInt(t, 10) - 1] : undefined;
+      const byId = p.models.find((m) => m === t || m.endsWith("/" + t));
+      model = byIdx || byId;
+      if (!model) return toast(`「${t}」不在 ${p.id} 的模型列表里`, true);
+    }
+  }
   await api("/api/agent/pi/config", { method: "PUT", body: JSON.stringify({ defaultProvider: id, defaultModel: model }) });
-  toast(`✅ 已把默认模型切到 ${id}${model ? " / " + model : ""}`);
+  toast(`✅ 默认模型已切到 ${id} / ${model}(新会话生效;当前会话用 /model 切)`);
   await loadState();
 }
 
@@ -542,6 +657,15 @@ async function editPiProvider(i) {
   if (key === null) return;
   await api("/api/agent/pi/providers", { method: "POST", body: JSON.stringify({ action: "update", id: p.id, newApiKey: key === "none" ? "none" : key }) });
   toast(key === "none" ? "已删除该 provider 的 key" : "✅ API Key 已更新");
+  await loadState();
+}
+
+async function editPiModels(i) {
+  const p = S.agents.pi.providers[i];
+  const input = prompt(`更新 ${p.id} 的模型列表(逗号分隔多个,清空则删除全部模型):`, p.models.join(", "));
+  if (input === null) return;
+  await api("/api/agent/pi/providers", { method: "POST", body: JSON.stringify({ action: "update", id: p.id, models: input.trim() }) });
+  toast("✅ 模型列表已更新");
   await loadState();
 }
 
@@ -560,8 +684,9 @@ async function addPiProvider() {
     baseUrl: $("c-pi-npurl").value.trim(),
     api: $("c-pi-npapi").value,
     newApiKey: $("c-pi-npkey").value.trim(),
+    models: $("c-pi-npmodels").value.trim(),
   })});
-  toast("✅ Provider 已添加;模型列表可稍后在「配置文件」里补充");
+  toast("✅ Provider 已添加");
   await loadState();
 }
 
@@ -581,6 +706,96 @@ async function saveCodexAuth() {
   await loadState();
 }
 
+function warnProfileRefs(r) {
+  const refs = (r && r.profileRefs) || [];
+  return refs.length ? ` ⚠️ ${refs.join("、")} 的 model_provider 指向它,请检查对应 profile` : "";
+}
+
+async function useCodexProvider(id) {
+  const s = S.agents.codex.settings;
+  const p = S.agents.codex.providers.find((x) => x.id === id);
+  const models = (p && p.models) || [];
+  let model = "";
+  if (models.length) {
+    if (models.length === 1) model = models[0];
+    else {
+      const input = prompt(
+        `${id} 有 ${models.length} 个模型,设哪个为默认?\n` +
+        models.map((m, i) => `${i + 1}. ${m}`).join("\n") +
+        "\n输入序号或模型 ID(直接确定选第 1 个):",
+        models[0]
+      );
+      if (input === null) return;
+      const t = input.trim();
+      model = t ? ((/^\d+$/.test(t) ? models[parseInt(t, 10) - 1] : undefined) || models.find((m) => m === t || m.endsWith("/" + t))) : models[0];
+      if (!model) return toast(`「${t}」不在 ${id} 的模型列表里`, true);
+    }
+  } else {
+    const input = prompt(`切到 provider「${id}」。\n该 provider 没配模型列表(可点「改模型」补),手输模型 ID(留空 = 保留当前 ${s.model || "未设置"}):`, s.model || "");
+    if (input === null) return;
+    model = input.trim();
+  }
+  const body = { modelProvider: id };
+  if (model) body.model = model;
+  await api("/api/agent/codex/config", { method: "PUT", body: JSON.stringify(body) });
+  toast(`✅ 默认已切到 ${id}${model ? " / " + model : ""}(重启 codex 生效)`);
+  await loadState();
+}
+
+async function editCodexModels(id) {
+  const p = S.agents.codex.providers.find((x) => x.id === id);
+  const input = prompt(`更新 ${id} 的模型列表(逗号分隔多个,清空则删除列表):`, (p.models || []).join(", "));
+  if (input === null) return;
+  await api("/api/agent/codex/providers", { method: "POST", body: JSON.stringify({ action: "update", id, models: input.trim() }) });
+  toast("✅ 模型列表已更新");
+  await loadState();
+}
+
+async function genCodexProfile(id) {
+  const r = await api("/api/agent/codex/providers", { method: "POST", body: JSON.stringify({ action: "gen-profile", id }) });
+  const b = (r && r.bundle) || {};
+  toast(`✅ 已生成 /model 配置(${(b.models || []).length} 个模型)\n用法: ${b.usage || "codex --profile " + id}`, false);
+  await loadState();
+}
+
+async function editCodexProvider(id) {
+  const p = S.agents.codex.providers.find((x) => x.id === id);
+  const url = prompt(`更新 ${id} 的 base_url:`, p.baseUrl);
+  if (url === null) return;
+  const env = prompt(`更新 ${id} 的 env_key(环境变量名;留空 = 使用 auth.json 的 key):`, p.envKey);
+  if (env === null) return;
+  const wire = prompt(`更新 ${id} 的 wire_api(codex 0.146+ 仅支持 responses):`, p.wireApi || "responses");
+  if (wire === null) return;
+  const r = await api("/api/agent/codex/providers", { method: "POST", body: JSON.stringify({
+    action: "update", id, baseUrl: url.trim(), envKey: env.trim(), wireApi: wire.trim(),
+  })});
+  toast("✅ Provider 已更新" + warnProfileRefs(r));
+  await loadState();
+}
+
+async function delCodexProvider(id) {
+  if (!confirm(`删除 provider「${id}」?(config.toml 中该表将被移除,带备份)`)) return;
+  const r = await api("/api/agent/codex/providers", { method: "POST", body: JSON.stringify({ action: "delete", id }) });
+  toast("已删除 " + id + warnProfileRefs(r));
+  await loadState();
+}
+
+async function addCodexProvider() {
+  const id = $("c-cx-npid").value.trim();
+  if (!id) return toast("请填 Provider ID", true);
+  if (!$("c-cx-npurl").value.trim()) return toast("请填 Base URL", true);
+  const r = await api("/api/agent/codex/providers", { method: "POST", body: JSON.stringify({
+    action: "create", id,
+    name: $("c-cx-npname").value.trim(),
+    baseUrl: $("c-cx-npurl").value.trim(),
+    envKey: $("c-cx-npkey").value.trim(),
+    models: $("c-cx-npmodels").value.trim(),
+    wireApi: $("c-cx-npwire").value,
+  })});
+  toast("✅ Provider 已添加" + warnProfileRefs(r));
+  await loadState();
+}
+
 // ---------- Skills ----------
 function renderSkills() {
   const tabs = $("skills-tabs");
@@ -588,6 +803,7 @@ function renderSkills() {
   const groups = [
     { id: "claude-code", label: `Claude Code(${S.agents["claude-code"].skills.length})` },
     { id: "pi", label: `Pi(${S.agents.pi.skills.length})` },
+    { id: "codex", label: `Codex(${S.agents.codex.skills.length})` },
   ];
   for (const g of groups) {
     const b = document.createElement("button");
@@ -598,16 +814,16 @@ function renderSkills() {
   }
   const skills = S.agents[skillsAgent].skills;
   const q = ($("skill-search") || {}).value || "";
-  const filtered = skills.filter((s) => !q || s.name.toLowerCase().includes(q.toLowerCase()));
+  const filtered = skills.filter((s) => !q || s.name.toLowerCase().includes(q.toLowerCase()) || (s.id || "").toLowerCase().includes(q.toLowerCase()));
   const rows = filtered.map((s) => `
     <tr>
       <td class="mono">${esc(s.name)}${s.disabled ? ` <span class="badge off">已停用</span>` : ""}</td>
       <td>${s.source === "shared" ? `<span class="badge" title="~/.agents/skills(软链自 ~/.claude/skills)">共享</span>` : "<span class=\"badge on\">专属</span>"}</td>
       <td class="muted">${esc((s.description || s.fallbackTitle || "").slice(0, 90))}</td>
       <td><div class="ops">
-        ${s.disabled ? `<button class="btn small" onclick="skillAction('enable','${esc(s.name)}')">启用</button>`
-                     : `<button class="btn small" onclick="skillAction('disable','${esc(s.name)}')">停用</button>`}
-        <button class="btn small danger" onclick="skillAction('delete','${esc(s.name)}')">删除</button>
+        ${s.disabled ? `<button class="btn small" onclick="skillAction('enable','${esc(s.id || s.name)}')">启用</button>`
+                     : `<button class="btn small" onclick="skillAction('disable','${esc(s.id || s.name)}')">停用</button>`}
+        <button class="btn small danger" onclick="skillAction('delete','${esc(s.id || s.name)}')">删除</button>
       </div></td>
     </tr>`).join("");
   $("skills-panel").innerHTML = `
@@ -652,6 +868,12 @@ function renderPlugins() {
   const pluginRows = cc.plugins.map((p) => `
     <tr><td class="mono">${esc(p.name)}</td><td class="muted">${esc(p.repo)}</td>
     <td class="muted">${esc(p.version)}</td><td class="muted">${esc(p.desc)}</td></tr>`).join("");
+  const cx = S.agents.codex;
+  const cxPluginRows = (cx.plugins || []).map((p) => `
+    <tr><td class="mono">${esc(p.plugin)}</td>
+    <td>${p.status === "installed" ? '<span class="badge on">已安装</span>' : `<span class="badge off">${esc(p.status)}</span>`}</td>
+    <td class="mono">${esc(p.version || "-")}</td><td class="muted mono" style="font-size:11px">${esc(p.path)}</td></tr>`).join("");
+  const mcpRows = (cx.mcp || []).map((l) => `<div class="mono" style="padding:2px 0">${esc(l)}</div>`).join("");
   html += `
   <div class="card">
     <h2 style="margin-bottom:4px">Pi 扩展(~/.pi/agent/extensions/)</h2>
@@ -667,8 +889,32 @@ function renderPlugins() {
     <div class="muted" style="margin-top:8px">插件启用/禁用请用 Claude Code 的 /plugin 命令</div>
   </div>
   <div class="card">
-    <h2 style="margin-bottom:4px">Codex</h2>
-    <div class="empty">Codex 无插件系统(配置见「模型与密钥」)</div>
+    <h2 style="margin-bottom:4px">Codex Skills(~/.codex/skills/)</h2>
+    <div class="muted" style="margin-bottom:10px">与 Claude/Pi 同为 SKILL.md 约定,可启用/停用/删除/新建;内置系统 skills(.system)不在此显示</div>
+    <table><tbody>${cx.skills.map((s) => `
+      <tr><td class="mono">${esc(s.name)}${s.disabled ? ` <span class="badge off">已停用</span>` : ""}</td>
+      <td class="muted">${esc((s.description || s.fallbackTitle || "").slice(0, 80))}</td>
+      <td><div class="ops">
+        ${s.disabled ? `<button class="btn small" onclick="skillAction('enable','${esc(s.id)}')">启用</button>`
+                     : `<button class="btn small" onclick="skillAction('disable','${esc(s.id)}')">停用</button>`}
+        <button class="btn small danger" onclick="skillAction('delete','${esc(s.id)}')">删除</button>
+      </div></td></tr>`).join("") || `<tr><td class="empty">暂无 skill</td></tr>`}</tbody></table>
+  </div>
+  <div class="card">
+    <h2 style="margin-bottom:4px">Codex 插件(marketplace 快照)</h2>
+    <table><thead><tr><th>插件</th><th>状态</th><th>版本</th><th>路径</th></tr></thead>
+    <tbody>${cxPluginRows || `<tr><td colspan="4" class="empty">暂无</td></tr>`}</tbody></table>
+    <div class="muted" style="margin-top:8px">安装/卸载请用 codex plugin add / codex plugin remove(marketplace 机制)</div>
+  </div>
+  <div class="card">
+    <h2 style="margin-bottom:4px">Codex MCP servers(codex mcp 管理)</h2>
+    <div style="margin-bottom:8px">${mcpRows || `<div class="empty">暂无 MCP server</div>`}</div>
+    <div class="form-row">
+      <div class="field"><label>名称</label><input type="text" id="cx-mcp-name" placeholder="my-tool"></div>
+      <div class="field"><label>启动命令(空格分隔参数)</label><input type="text" id="cx-mcp-cmd" placeholder="npx -y some-mcp-server"></div>
+    </div>
+    <button class="btn" onclick="addCodexMcp()">＋ 添加</button>
+    <button class="btn danger" onclick="delCodexMcp()">移除…</button>
   </div>`;
   panel.innerHTML = html;
 }
@@ -677,6 +923,23 @@ async function delPiExt(name) {
   if (!confirm(`删除 Pi 扩展「${name}」?(删除前自动备份)`)) return;
   await api("/api/agent/pi/extensions", { method: "POST", body: JSON.stringify({ action: "delete", name }) });
   toast("已删除扩展 " + name);
+  await loadState();
+}
+
+async function addCodexMcp() {
+  const name = $("cx-mcp-name").value.trim();
+  const cmd = $("cx-mcp-cmd").value.trim();
+  if (!name || !cmd) return toast("请填名称和启动命令", true);
+  const r = await api("/api/agent/codex/mcp", { method: "POST", body: JSON.stringify({ action: "add", name, command: cmd }) });
+  toast("✅ MCP server 已添加" + (r.output ? "\n" + r.output : ""));
+  await loadState();
+}
+
+async function delCodexMcp() {
+  const name = prompt("要移除的 MCP server 名称:");
+  if (!name) return;
+  const r = await api("/api/agent/codex/mcp", { method: "POST", body: JSON.stringify({ action: "remove", name: name.trim() }) });
+  toast("已移除 " + name.trim() + (r.output ? "\n" + r.output : ""));
   await loadState();
 }
 
